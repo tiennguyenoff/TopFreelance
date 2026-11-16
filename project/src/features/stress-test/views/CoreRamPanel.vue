@@ -32,7 +32,7 @@
 
     <div v-if="done" class="text-[11px] rounded-xl px-3 py-2" :class="done.violations ? 'bg-rose-50 text-rose-800' : 'bg-emerald-50 text-emerald-800'" data-testid="core-ram-done">
       <b>{{ reasonText }}</b> — {{ done.jobs.toLocaleString() }} việc, đỉnh {{ done.peakOldMB }} MB = {{ done.pctLimit }}% trần {{ done.limitMB }} MB.
-      Sau dọn: {{ done.afterCleanOldMB }} MB (nền {{ done.baseMB }} MB). Vi phạm bất biến: {{ done.violations }}. Nguồn: đo thật tại Node.
+      Sau dọn: {{ done.afterCleanOldMB }} MB (nền {{ done.baseMB }} MB). RSS đỉnh của tiến trình: {{ done.peakRssMB }} MB (cả vùng trẻ, mã, bộ đệm ngoài; sau dọn {{ done.rssAfterCleanMB }} MB). Vi phạm bất biến: {{ done.violations }}. Nguồn: đo thật tại Node.
     </div>
     <div v-if="error" class="text-[11px] text-rose-700">{{ error }}</div>
   </div>
@@ -53,6 +53,7 @@ let es = null;
 const last = computed(() => steps.value[steps.value.length - 1] || { pctLimit: 0 });
 const reasonText = computed(() => ({
   'safe-stop': 'Dừng an toàn ở ngưỡng',
+  'safe-stop-rss': 'Dừng an toàn theo RSS toàn tiến trình',
   cancelled: 'Đã hủy theo yêu cầu',
   invariant: 'Dừng vì có vi phạm bất biến',
   'max-steps': 'Hết số bậc tối đa'

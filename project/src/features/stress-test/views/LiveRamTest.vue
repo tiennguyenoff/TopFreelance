@@ -26,11 +26,10 @@
     <!-- ===================== CHẾ ĐỘ 1: TRÌNH DUYỆT ===================== -->
     <template v-if="mode === 'browser'">
       <p class="text-[10.5px] text-slate-600 leading-snug">
-        Chạy trên luồng chính của chính trang này: mỗi lô {{ fmtInt(BATCH) }} việc chặn giao diện vài trăm mili-giây, nên
-        <b>trang sẽ giật thật</b> và FPS tụt khi RAM tăng. Tự dừng ở trần an toàn để tab không bị trình duyệt đóng.
+        Dữ liệu nằm trong một <b>Web Worker</b> của chính trang này (giao diện không bị chặn). "Giải phóng RAM" hủy worker nên heap của nó được trả ngay. Tự dừng <b>trước</b> khi tổng RAM ước tính của cả trang chạm trần (lô nhỏ dần khi gần trần), để tab không bị trình duyệt đóng.
       </p>
       <div class="flex items-center gap-2 flex-wrap">
-        <label class="text-[11px] text-slate-600">Trần an toàn</label>
+        <label class="text-[11px] text-slate-600" title="Tổng RAM ước tính của cả trang (heap cấp phát + phần ngoài heap), không chỉ heap JS">Trần RAM cả trang</label>
         <select v-model.number="capMb" :disabled="b.running" class="text-[11px] border border-platinum-200 rounded-lg px-1.5 py-1 bg-white">
           <option v-for="c in capOptions" :key="c" :value="c">{{ c }} MB</option>
         </select>
@@ -44,7 +43,7 @@
         <button
           class="px-3 py-1.5 rounded-xl text-[11px] font-bold border border-platinum-200 text-slate-700 hover:border-slate-400 disabled:opacity-40"
           :disabled="b.running || !b.jobs"
-          title="Bỏ mọi tham chiếu tới dữ liệu thử để bộ dọn rác (GC) thu hồi"
+          title="Hủy Web Worker giữ dữ liệu thử: heap của nó được trả ngay"
           @click="releaseBrowser"
         >Giải phóng RAM</button>
       </div>
@@ -56,9 +55,10 @@
           <div class="tile-v">{{ fmtInt(b.jobs) }}</div>
         </div>
         <div class="tile">
-          <div class="tile-k">Heap JS{{ b.estimated ? ' (ước tính)' : '' }}</div>
-          <div class="tile-v">{{ b.heapMb.toFixed(0) }} <span class="tile-u">/ {{ capMb }} MB</span></div>
-          <div class="bar"><div class="bar-in" :style="{ width: Math.min(100, (b.heapMb / capMb) * 100) + '%', background: b.heapMb / capMb > 0.8 ? '#eb6834' : '#2a78d6' }"></div></div>
+          <div class="tile-k">Tổng RAM cả trang (ước tính)</div>
+          <div class="tile-v">{{ b.totalMb.toFixed(0) }} <span class="tile-u">/ {{ capMb }} MB</span></div>
+          <div class="bar"><div class="bar-in" :style="{ width: Math.min(100, (b.totalMb / capMb) * 100) + '%', background: b.totalMb / capMb > 0.8 ? '#eb6834' : '#2a78d6' }"></div></div>
+          <div class="tile-k">heap dùng {{ b.heapMb.toFixed(0) }}{{ b.estimated ? ' (ước tính)' : '' }} · heap cấp {{ b.allocMb.toFixed(0) }} · ngoài heap ≈ {{ OVERHEAD_MB }} MB</div>
         </div>
         <div class="tile">
           <div class="tile-k">Khung hình / giây</div>
@@ -72,13 +72,16 @@
         </div>
       </div>
 
+      <p class="text-[10px] text-slate-400 leading-snug">
+        Con số này <b>không bằng Task Manager</b>: trình duyệt chỉ cho trang đọc heap JS (dùng / đã cấp). Phần ngoài heap (mã, DOM, three.js, GPU, bộ đệm) cộng bằng hằng số hiệu chuẩn ≈ {{ OVERHEAD_MB }} MB, nên tổng chỉ là ước tính. Giải phóng RAM: bỏ tham chiếu rồi tạo rác ngắn hạn để V8 buộc phải dọn (trình duyệt không cho gọi gc() trực tiếp); hệ điều hành trả RAM cho tiến trình dần, và ~{{ OVERHEAD_MB }} MB còn lại là nền của chính trang này.
+      </p>
       <div v-if="b.status" class="text-[10.5px] rounded-xl px-2.5 py-1.5" :class="b.statusTone === 'warn' ? 'bg-amber-50 text-amber-800' : 'bg-platinum-50 text-slate-600'">
         {{ b.status }}
       </div>
 
       <!-- Biểu đồ heap theo thời gian -->
       <div v-if="b.series.length > 1">
-        <div class="text-[11px] font-bold text-slate-700 mb-0.5">Heap JS (MB) theo thời gian</div>
+        <div class="text-[11px] font-bold text-slate-700 mb-0.5">Tổng RAM trang ước tính (đậm) và heap JS dùng (nhạt), MB</div>
         <div class="relative" @mouseleave="hov = null">
           <svg :viewBox="`0 0 ${W} ${H}`" class="w-full h-auto block" @mousemove="onMoveB($event)">
             <g v-for="t in heapTicks" :key="'h' + t">
@@ -92,16 +95,18 @@
               <text :x="xT(b.releaseAt) + 3" :y="PT + 8" class="tick">giải phóng</text>
             </template>
             <text v-for="t in timeTicks" :key="'t' + t" :x="xT(t)" :y="H - PB + 12" class="tick" text-anchor="middle">{{ t }}s</text>
-            <path :d="pathB(s => s.heap, yHeap)" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+            <path :d="pathB(s => s.heap, yHeap)" fill="none" stroke="#2a78d6" stroke-opacity="0.45" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />
+            <path :d="pathB(s => s.total, yHeap)" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
             <template v-if="hov && hov.chart === 'heap'">
               <line :x1="hov.x" :x2="hov.x" :y1="PT" :y2="H - PB" class="cross" />
-              <circle :cx="hov.x" :cy="yHeap(hov.s.heap)" r="4" fill="#2a78d6" class="ring-stroke" />
+              <circle :cx="hov.x" :cy="yHeap(hov.s.total)" r="4" fill="#2a78d6" class="ring-stroke" />
             </template>
           </svg>
           <div v-if="hov && hov.chart === 'heap'" class="tip" :style="tipStyle">
             <div class="font-bold text-slate-900">Giây {{ hov.s.t.toFixed(1) }}</div>
             <div>{{ fmtInt(hov.s.jobs) }} việc</div>
-            <div>Heap {{ hov.s.heap.toFixed(0) }} MB</div>
+            <div>Tổng ước tính {{ hov.s.total.toFixed(0) }} MB</div>
+            <div>Heap dùng {{ hov.s.heap.toFixed(0) }} MB</div>
             <div>{{ hov.s.fps }} FPS</div>
           </div>
         </div>
@@ -222,7 +227,8 @@
 
 <script setup>
 import { ref, reactive, computed, nextTick, onBeforeUnmount } from 'vue';
-import { createTestData, generateAndIndexBatch, sampleAvlSearch, sampleHashSearch } from '../controllers/RamTestController.js';
+
+import { createTestData, generateAndIndexBatch } from '../controllers/RamTestController.js';
 
 const emit = defineEmits(['heap']);
 
@@ -231,6 +237,12 @@ const COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100'];
 const W = 320, H = 160, HS = 90;
 const PL = 30, PR = 8, PT = 8, PB = 22;
 const BATCH = 25000;
+const MIN_BATCH = 1000;
+// Hiệu chuẩn: phần RAM của trang NẰM NGOÀI heap JS (mã, DOM, three.js, GPU, bộ đệm). Trang chỉ đọc được heap JS,
+// nên tổng ước tính = heap cấp phát + hằng số này. Số liệu đo xem HISTORY.md phiên #56.
+const OVERHEAD_MB = 220;
+const SAFETY = 0.97;   // dừng khi tổng ước tính dự kiến sau lô kế ≥ 97% trần
+const GC_SLACK = 1.35; // heap cấp phát tăng nhanh hơn heap dùng vì chưa kịp dọn
 const SAMPLES = 2000;
 const NODE_LIMITS = [128, 256, 384, 512, 768, 1024];
 const STATUS_TEXT = { running: 'Đang nạp…', oom: '✕ Sập: hết bộ nhớ', stopped: 'Đã dừng', done: 'Hoàn tất', error: 'Lỗi' };
@@ -258,11 +270,29 @@ const heapLimitMb = mem() ? mem().jsHeapSizeLimit / 1048576 : 2048;
 const capOptions = [256, 512, 1024, 2048].filter(c => c <= heapLimitMb * 0.6);
 const capMb = ref(capOptions.includes(512) ? 512 : capOptions[capOptions.length - 1] || 256);
 
-// Dữ liệu thử nằm NGOÀI hệ phản ứng của Vue (không bọc Proxy) — giống cách lõi giữ 100k việc
-let data = null; // { jobs: [], avl, hash }
+// Dữ liệu thử nằm trong WEB WORKER riêng (mảng gốc + AVL + bảng băm). Trang chính chỉ giữ con số đo.
+// "Giải phóng RAM" = worker.terminate() → hủy cả heap của worker ngay, trang chính luôn ở mức nền.
+let worker = null;
+let wSeq = 0;
+const wPending = new Map();
+let wJobs = 0;       // số việc worker đang giữ
+let wUsed = 0, wTotal = 0, wBaseUsed = 0; // heap worker (MB)
+function spawnWorker() {
+  worker = new Worker(new URL('../controllers/ramWorker.js', import.meta.url), { type: 'module' });
+  worker.onmessage = (e) => { const r = wPending.get(e.data.id); if (r) { wPending.delete(e.data.id); r(e.data); } };
+  worker.onerror = (e) => { b.status = 'Lỗi worker: ' + (e.message || ''); b.statusTone = 'warn'; };
+}
+function wCall(msg) {
+  return new Promise((resolve) => { const id = ++wSeq; wPending.set(id, resolve); worker.postMessage({ ...msg, id }); });
+}
+function killWorker() {
+  if (worker) worker.terminate();
+  worker = null;
+  wPending.clear();
+}
 
 const b = reactive({
-  running: false, jobs: 0, heapMb: 0, fps: 60, worstFrame: 0, blockMs: 0, avlUs: '—', hashUs: '—',
+  running: false, jobs: 0, heapMb: 0, allocMb: 0, totalMb: 0, fps: 60, worstFrame: 0, blockMs: 0, avlUs: '—', hashUs: '—',
   status: '', statusTone: '', series: [], releaseAt: null, estimated: false
 });
 const busy = computed(() => b.running || n.running);
@@ -307,50 +337,67 @@ function startFps(extraMs = 0) {
 }
 
 function pushSample() {
-  const jobs = data ? data.jobs.length : 0;
-  b.heapMb = readHeap(jobs);
-  b.series.push({ t: (performance.now() - t0) / 1000, heap: b.heapMb, jobs, fps: b.fps, worst: b.worstFrame });
+  const jobs = wJobs;
+  // Tổng ước tính = heap trang chính (nền) + heap worker (dữ liệu) + phần ngoài heap
+  const m = mem();
+  const pageAlloc = m ? m.totalJSHeapSize / 1048576 : 80;
+  const pageUsed = m ? m.usedJSHeapSize / 1048576 : 80;
+  if (worker && wUsed != null && !b.estimated) {
+    b.heapMb = pageUsed + wUsed;
+    b.allocMb = pageAlloc + Math.max(wUsed, wTotal);
+  } else {
+    b.heapMb = pageUsed + (jobs * bytesPerJobEst) / 1048576;
+    b.allocMb = b.heapMb * 1.1;
+  }
+  b.totalMb = b.allocMb + OVERHEAD_MB;
+  b.series.push({ t: (performance.now() - t0) / 1000, heap: b.heapMb, total: b.totalMb, jobs, fps: b.fps, worst: b.worstFrame });
   if (b.series.length > 400) b.series.splice(0, b.series.length - 400);
-  emit('heap', +b.heapMb.toFixed(1));
+  emit('heap', +b.totalMb.toFixed(1));
 }
 
 const yieldFrame = () => new Promise(r => setTimeout(r, 30));
 
 async function startBrowser() {
   if (busy.value) return;
-  data = createTestData();
+  killWorker();
+  spawnWorker();
   clearInterval(releaseTimer);
+  wJobs = 0; wUsed = 0; wTotal = 0;
   b.running = true; b.series = []; b.releaseAt = null; b.estimated = false; b.jobs = 0;
-  b.status = 'Đang nạp… thử cuộn trang hoặc rê chuột: giao diện sẽ giật vì luồng chính đang bận.';
+  b.status = 'Đang nạp trong Web Worker riêng: giao diện vẫn mượt vì luồng chính không bị chặn.';
   b.statusTone = 'warn';
   staleCount = 0; lastRaw = 0;
   t0 = performance.now();
-  baseHeap = mem() ? mem().usedJSHeapSize / 1048576 : 80;
+  baseHeap = 0;
+  const w0 = await wCall({ type: 'mem' });
+  wBaseUsed = w0.usedMB ?? 0; wUsed = w0.usedMB; wTotal = w0.totalMB;
+  // Chrome KHÔNG có performance.memory trong Worker → hiệu chuẩn byte/việc bằng một mẫu nhỏ trên luồng chính (rồi bỏ ngay)
+  if (w0.usedMB == null) { b.estimated = true; bytesPerJobEst = calibrateBytesPerJob(); }
   startFps();
   pushSample();
   let batch = 0;
   while (b.running) {
+    // Dừng TRƯỚC trần: chọn cỡ lô sao cho tổng ước tính SAU lô vẫn dưới trần; gần trần thì lô nhỏ dần
+    const room = capMb.value * SAFETY - b.totalMb;
+    const perJobMb = (bytesPerJobEst * GC_SLACK) / 1048576;
+    const fit = Math.floor(room / perJobMb);
+    if (fit < MIN_BATCH) {
+      stopBrowser(`Dừng trước trần ${capMb.value} MB: tổng RAM trang ước tính ${b.totalMb.toFixed(0)} MB (heap dùng ${b.heapMb.toFixed(0)} + ngoài heap ≈ ${OVERHEAD_MB}), ${fmtInt(b.jobs)} việc. Bấm "Giải phóng RAM" để hủy worker và trả RAM.`);
+      break;
+    }
+    const size = Math.min(BATCH, Math.max(MIN_BATCH, Math.floor(fit / 2)));
     const tA = performance.now();
-    generateAndIndexBatch(data, BATCH, 7 + batch, data.jobs.length);
-    // Độ trễ tra cứu trên dữ liệu hiện có
-    b.avlUs = sampleAvlSearch(data.avl, data.jobs.length, SAMPLES).toFixed(2);
-    b.hashUs = sampleHashSearch(data.hash, SAMPLES).toFixed(2);
-    b.blockMs = Math.round(performance.now() - tA);
-    b.jobs = data.jobs.length;
+    const r = await wCall({ type: 'batch', size, seed: 7 + batch, samples: SAMPLES });
+    if (!b.running) break; // đã bị dừng/giải phóng trong lúc worker nạp
+    b.avlUs = r.avlUs.toFixed(2);
+    b.hashUs = r.hashUs.toFixed(2);
+    b.blockMs = Math.round(performance.now() - tA); // thời gian lô, KHÔNG còn chặn luồng giao diện
+    wJobs = r.jobs; wUsed = r.usedMB; wTotal = r.totalMB;
+    b.jobs = r.jobs;
     batch++;
 
-    const m = mem();
-    if (m && !b.estimated && b.jobs) bytesPerJobEst = Math.max(200, ((m.usedJSHeapSize / 1048576 - baseHeap) * 1048576) / b.jobs);
+    if (r.usedMB != null && b.jobs) bytesPerJobEst = Math.max(200, ((r.usedMB - wBaseUsed) * 1048576) / b.jobs);
     pushSample();
-
-    if (b.heapMb >= capMb.value) {
-      stopBrowser(`Chạm trần ${capMb.value} MB với ${fmtInt(b.jobs)} việc. Bấm "Giải phóng RAM" để xem bộ dọn rác thu hồi.`);
-      break;
-    }
-    if (m && m.usedJSHeapSize / m.jsHeapSizeLimit > 0.7) {
-      stopBrowser('Dừng khẩn cấp: heap đã tới 70% giới hạn của trình duyệt.');
-      break;
-    }
     await yieldFrame(); // nhả 1 khung hình để trình duyệt vẽ lại và đo FPS
   }
 }
@@ -364,30 +411,44 @@ function stopBrowser(reason) {
 }
 
 function releaseBrowser() {
-  if (b.running || !data) return;
-  const n0 = data.jobs.length;
-  data.jobs.length = 0;
-  data = null; // mất mọi tham chiếu → GC được phép thu hồi cả mảng, cây và bảng băm
+  if (b.running || !worker) return;
+  const n0 = wJobs;
+  // Hủy worker: cả heap của nó (mảng, cây AVL, bảng băm) bị trả ngay, không cấp phát thêm gì → không thể vượt trần khi giải phóng
+  killWorker();
+  wJobs = 0; wUsed = 0; wTotal = 0;
   b.jobs = 0;
-  b.estimated = false; staleCount = 0;
+  b.estimated = false;
   b.releaseAt = (performance.now() - t0) / 1000;
-  b.status = `Đã bỏ tham chiếu tới ${fmtInt(n0)} việc. Bộ dọn rác của V8 sẽ thu hồi trong vài giây — xem đường heap tụt xuống.`;
-  startFps(12000);
-  // Ghi điểm heap mỗi 0,5 s trong 12 s bằng bộ hẹn giờ (rAF bị tạm dừng khi tab bị ẩn)
+  b.status = `Đã hủy worker giữ ${fmtInt(n0)} việc: heap của nó được trả ngay, trang chính chỉ còn mức nền (~${OVERHEAD_MB} MB ngoài heap).`;
+  startFps(3000);
   clearInterval(releaseTimer);
   let ticks = 0;
   releaseTimer = setInterval(() => {
     pushSample();
-    if (++ticks >= 24 || b.running) clearInterval(releaseTimer);
+    if (++ticks >= 10 || b.running) clearInterval(releaseTimer);
   }, 500);
+  pushSample();
 }
 let releaseTimer = 0;
+
+// Nạp thử CAL_JOBS việc trên luồng chính, đo chênh lệch heap dùng, rồi bỏ tham chiếu (~vài chục MB rác, GC thu sau)
+const CAL_JOBS = 150000;
+function calibrateBytesPerJob() {
+  const m = mem();
+  if (!m) return 190;
+  const before = m.usedJSHeapSize;
+  let d = createTestData();
+  generateAndIndexBatch(d, CAL_JOBS, 99, 0);
+  const delta = mem().usedJSHeapSize - before;
+  d = null;
+  return delta > CAL_JOBS * 50 ? delta / CAL_JOBS : 190;
+}
 
 // ---- Biểu đồ trình duyệt ----
 const tMax = computed(() => Math.max(1, ...b.series.map(s => s.t)));
 const timeTicks = computed(() => niceTicks(tMax.value, 4).filter(t => t <= tMax.value));
 const heapMax = computed(() => {
-  const m = Math.max(capMb.value, ...b.series.map(s => s.heap));
+  const m = Math.max(capMb.value, ...b.series.map(s => s.total));
   const t = niceTicks(m, 4);
   return t[t.length - 1] < m ? t[t.length - 1] + (t[1] || 1) : t[t.length - 1];
 });
@@ -519,7 +580,7 @@ onBeforeUnmount(() => {
   closeEs();
   if (rafId) cancelAnimationFrame(rafId);
   clearInterval(releaseTimer);
-  data = null;
+  killWorker();
 });
 </script>
 

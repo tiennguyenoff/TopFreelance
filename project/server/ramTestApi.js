@@ -3,6 +3,7 @@
  *
  * GET  /api/ramtest/core   — bài thử RAM trên LÕI THẬT (CoreRamStepper.js, trần 1024 MB, dừng an toàn ~88%)
  * POST /api/ramtest/cancel  — hủy mềm bài thử lõi thật (gửi CANCEL qua stdin, tiến trình tự dọn và báo "done")
+ * GET  /api/ramtest/self   — RAM của CHÍNH tiến trình Node máy chủ dev (vite): pid, trần heap thật, rss/heap (nhãn nguồn "Node máy chủ dev")
  * GET /api/ramtest/stream?limit=256
  *   Sinh 1 tiến trình Node THẬT: node --max-old-space-size=<limit> RamLimitProbe.js --out=-
  *   Tiến trình nạp việc làm liên tục vào mảng gốc + AVL + bảng băm tới khi V8 hết bộ nhớ.
@@ -14,6 +15,7 @@
  * hoặc khi trình duyệt đóng kết nối.
  */
 import { spawn } from 'node:child_process';
+import v8 from 'node:v8';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,13 +52,25 @@ export function ramTestApiPlugin() {
         const url = new URL(req.url, 'http://localhost');
         const isCore = req.method === 'GET' && url.pathname === '/api/ramtest/core';
         const isCancel = req.method === 'POST' && url.pathname === '/api/ramtest/cancel';
-        if (!isCore && !isCancel && (req.method !== 'GET' || url.pathname !== '/api/ramtest/stream')) {
+        const isSelf = req.method === 'GET' && url.pathname === '/api/ramtest/self';
+        if (!isCore && !isCancel && !isSelf && (req.method !== 'GET' || url.pathname !== '/api/ramtest/stream')) {
           res.statusCode = 404;
           return res.end();
         }
         if (!sameOrigin(req)) {
           res.statusCode = 403;
           return res.end('Chỉ chạy được từ chính trang TopFreelance.');
+        }
+        if (isSelf) {
+          const m = process.memoryUsage();
+          const mb = (b) => +(b / 1048576).toFixed(1);
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          return res.end(JSON.stringify({
+            source: 'Node máy chủ dev', pid: process.pid, node: process.version, port: server.config.server.port,
+            heapLimitMB: mb(v8.getHeapStatistics().heap_size_limit), execArgv: process.execArgv,
+            rssMB: mb(m.rss), heapUsedMB: mb(m.heapUsed), heapTotalMB: mb(m.heapTotal), externalMB: mb(m.external)
+          }));
         }
         if (isCancel) {
           // Lệnh hủy mềm: tiến trình tự dừng giữa các khối thao tác, hủy lõi riêng và báo kết quả

@@ -4,7 +4,7 @@
  * Quy trình (một tiến trình Node, một bản lõi riêng/sandbox):
  *   bậc 0: dựng lõi 250.000 việc  → chạy một đợt thao tác cố định → đo RAM + thời gian
  *   bậc k: nạp thêm 250.000 việc (≈ +100 MB, đo thực tế ~410 byte/việc) → chạy lại đợt thao tác → đo
- *   Dừng AN TOÀN khi vùng "già" (old space) chạm ~88% trần, hoặc khi nhận lệnh hủy (stdin "CANCEL" / SIGINT / SIGTERM).
+ *   Dừng AN TOÀN khi RSS (cả tiến trình) hoặc RSS dự kiến bậc kế vượt 900 MB, hoặc khi vùng "già" (old space) chạm ~88% trần, hoặc khi nhận lệnh hủy (stdin "CANCEL" / SIGINT / SIGTERM).
  *   Cuối cùng hủy toàn bộ lõi riêng và đo lại RAM sau dọn.
  *
  * Trần 1024 MB CHỈ dùng cho bài thử riêng này (cờ --max-old-space-size=1024 của npm run test:ram:core).
@@ -39,13 +39,14 @@ const tick = () => new Promise((r) => setImmediate(r));
  * @param {(ev:Object)=>void} o.emit
  * @param {()=>boolean} [o.shouldCancel]
  */
-export async function runCoreRamStepper({ limitMB, stopPct = 88, stepJobs = 250000, opsPerStep = 20000, maxSteps = 40, seed = DEFAULT_SEED, emit, shouldCancel = () => false }) {
+export async function runCoreRamStepper({ limitMB, rssStopMB = 900, stopPct = 88, stepJobs = 250000, opsPerStep = 20000, maxSteps = 40, seed = DEFAULT_SEED, emit, shouldCancel = () => false }) {
   const flag = process.execArgv.find((a) => a.startsWith('--max-old-space-size='));
   const LIMIT = limitMB || (flag ? Number(flag.split('=')[1]) : v8.getHeapStatistics().heap_size_limit / 1048576);
   const stopAtMB = (LIMIT * stopPct) / 100;
   const t00 = performance.now();
   const baseMB = oldSpaceMB();
-  emit({ type: 'start', mode: 'core', source: 'node', limitMB: Math.round(LIMIT), stopPct, stopAtMB: Math.round(stopAtMB), stepJobs, opsPerStep, seed, node: process.version, pid: process.pid, baseMB: +baseMB.toFixed(1) });
+  const rssBase = process.memoryUsage().rss / 1048576;
+  emit({ type: 'start', mode: 'core', source: 'node', limitMB: Math.round(LIMIT), stopPct, stopAtMB: Math.round(stopAtMB), rssStopMB, stepJobs, opsPerStep, seed, node: process.version, pid: process.pid, baseMB: +baseMB.toFixed(1) });
 
   const sb = new StressSandbox({ seed, jobCount: stepJobs });
   let reason = 'max-steps';
@@ -53,6 +54,8 @@ export async function runCoreRamStepper({ limitMB, stopPct = 88, stepJobs = 2500
   let totalOps = 0;
   let step = 0;
   let violations = 0;
+  let peakRssMB = 0;
+  let peakHeapMB = 0;
   try {
     for (step = 0; step < maxSteps; step++) {
       const t0 = performance.now();
@@ -87,6 +90,8 @@ export async function runCoreRamStepper({ limitMB, stopPct = 88, stepJobs = 2500
       const mem = process.memoryUsage();
       const oldMB = oldSpaceMB();
       lastOld = oldMB;
+      peakRssMB = Math.max(peakRssMB, mem.rss / 1048576);
+      peakHeapMB = Math.max(peakHeapMB, mem.heapUsed / 1048576);
       const inv = checkInvariants(e);
       const v = totalViolations(inv);
       violations += v;
@@ -104,7 +109,12 @@ export async function runCoreRamStepper({ limitMB, stopPct = 88, stepJobs = 2500
       if (v > 0) { reason = 'invariant'; break; }
       // Bậc kế tiếp cần thêm ~ (oldMB - base)/(step+1) MB: dừng nếu dự kiến vượt ngưỡng an toàn
       const perStep = (oldMB - baseMB) / (step + 1);
+      // Dừng theo RSS (cả tiến trình, mốc 1 GB của máy thật), không chỉ old-space: RSS đỉnh + mức tăng/bậc phải dưới ngưỡng
+      const rssNow = mem.rss / 1048576;
+      const rssPerStep = (rssNow - rssBase) / (step + 1);
+      const rssNext = rssNow + rssPerStep;
       if (oldMB >= stopAtMB || oldMB + perStep > stopAtMB) { reason = 'safe-stop'; break; }
+      if (rssNow >= rssStopMB || rssNext > rssStopMB) { reason = 'safe-stop-rss'; break; }
       if (shouldCancel()) { reason = 'cancelled'; break; }
     }
   } finally {
@@ -115,10 +125,11 @@ export async function runCoreRamStepper({ limitMB, stopPct = 88, stepJobs = 2500
     try { v8.setFlagsFromString('--expose-gc'); vm.runInNewContext('gc')(); } catch { /* không ép được: số sau dọn có thể còn cao */ }
     await tick();
     const after = oldSpaceMB();
+    const rssAfter = process.memoryUsage().rss / 1048576;
     emit({
       type: 'done', reason, jobs: jobsAtEnd, steps: step + 1, totalOps, violations,
       limitMB: Math.round(LIMIT), peakOldMB: +peakOld.toFixed(1), pctLimit: +((peakOld / LIMIT) * 100).toFixed(1),
-      afterCleanOldMB: +after.toFixed(1), baseMB: +baseMB.toFixed(1), totalMs: +(performance.now() - t00).toFixed(0), source: 'node'
+      afterCleanOldMB: +after.toFixed(1), peakRssMB: +peakRssMB.toFixed(1), peakHeapMB: +peakHeapMB.toFixed(1), rssAfterCleanMB: +rssAfter.toFixed(1), rssBaseMB: +rssBase.toFixed(1), baseMB: +baseMB.toFixed(1), totalMs: +(performance.now() - t00).toFixed(0), source: 'node'
     });
   }
 }
@@ -138,13 +149,14 @@ if (isMain) {
   process.stdin.unref?.();
   const emit = (o) => {
     if (human) {
-      if (o.type === 'start') console.log(`Trần old-space ${o.limitMB} MB · dừng an toàn ở ${o.stopAtMB} MB (${o.stopPct}%) · mỗi bậc +${o.stepJobs} việc, ${o.opsPerStep} thao tác · nền ${o.baseMB} MB`);
+      if (o.type === 'start') console.log(`Trần old-space ${o.limitMB} MB · dừng an toàn ở old ${o.stopAtMB} MB (${o.stopPct}%) hoặc RSS ${o.rssStopMB} MB · mỗi bậc +${o.stepJobs} việc, ${o.opsPerStep} thao tác · nền ${o.baseMB} MB`);
       else if (o.type === 'step') console.log(`bậc ${String(o.step).padStart(2)}: ${String(o.jobs).padStart(8)} việc | old ${String(o.oldMB).padStart(6)} MB (${o.pctLimit}%) | heap ${o.heapMB} MB | rss ${o.rssMB} MB | nạp ${o.loadMs} ms | ${o.opsPerSec} thao tác/s | AVL cao ${o.avlHeight} | vi phạm ${o.violations}`);
-      else console.log(`XONG (${o.reason}): ${o.jobs} việc, đỉnh old-space ${o.peakOldMB} MB = ${o.pctLimit}% trần ${o.limitMB} MB; sau dọn ${o.afterCleanOldMB} MB (nền ${o.baseMB} MB); vi phạm ${o.violations}; ${o.totalMs} ms`);
+      else console.log(`XONG (${o.reason}): ${o.jobs} việc, đỉnh old-space ${o.peakOldMB} MB = ${o.pctLimit}% trần ${o.limitMB} MB; sau dọn ${o.afterCleanOldMB} MB (nền ${o.baseMB} MB); heap đỉnh ${o.peakHeapMB} MB; RSS đỉnh ${o.peakRssMB} MB (nền ${o.rssBaseMB}, sau dọn ${o.rssAfterCleanMB}); vi phạm ${o.violations}; ${o.totalMs} ms`);
     } else fs.writeSync(1, JSON.stringify(o) + '\n');
   };
   await runCoreRamStepper({
     stopPct: Number(args['stop-pct']) || 88,
+    rssStopMB: Number(args['rss-stop']) || 900,
     stepJobs: Number(args['step-jobs']) || 250000,
     opsPerStep: Number(args.ops) || 20000,
     maxSteps: Number(args['max-steps']) || 40,
