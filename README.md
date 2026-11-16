@@ -41,6 +41,9 @@
    - Cây AVL, Bảng băm, Hàng đợi, Danh sách liên kết chỉ lưu **con trỏ (memory reference)** tới đối tượng gốc, tuyệt đối không duplicate dữ liệu. 100.000 con trỏ chỉ tốn $\approx 4\,\text{MB}$ RAM!
 2. **Khống chế Heap Node.js:**
    - Script chạy backend và benchmark được ép cờ: `--max-old-space-size=512`.
+   - `npm run dev` cũng chạy `node --max-old-space-size=512 vite` (heap V8 của máy chủ dev bị chặn cứng). Kiểm chứng: mở `http://localhost:5173/api/ramtest/self` (nhãn "Node máy chủ dev") sẽ thấy `execArgv` có cờ và `heapLimitMB` ≈ 704 (512 MB vùng già + vùng trẻ), kèm `pid`/`rssMB` của đúng tiến trình vite. Bài thử RAM lõi (`test:ram:core`) là ngoại lệ trần 1024 MB và dừng theo RSS toàn tiến trình ≈ 900 MB.
+   - Bài "Thử RAM cực hạn" trên trang web đo/dừng theo **tổng RAM ước tính của cả trang** (heap cấp phát + hằng số hiệu chuẩn ngoài heap), dừng trước trần; số này không bằng Task Manager vì trình duyệt chỉ cho trang đọc heap JS.
+   - Dữ liệu của bài tab web nằm trong **Web Worker** (`controllers/ramWorker.js`); "Giải phóng RAM" = `worker.terminate()` nên heap bị hủy ngay, không cấp phát thêm rác ép GC (không thể vượt trần khi giải phóng). Chrome không có `performance.memory` trong Worker, nên byte/việc được hiệu chuẩn bằng mẫu 150.000 việc trên luồng chính trước khi nạp.
    - Node.js bản chất là Single-threaded Event Loop nên tự động chỉ dùng đúng 1 CPU Core.
 3. **Ảo hóa DOM (Virtual Pagination):**
    - Dù hệ sinh thái có 100.000 công việc trong bộ nhớ, giao diện Vue 3 chỉ render $15 - 20$ thẻ công việc đang hiển thị trên màn hình. Trình duyệt chỉ tốn chưa tới $70\,\text{MB}$ RAM.
