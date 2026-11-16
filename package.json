@@ -1,0 +1,28 @@
+{
+  "name": "topfreelance-core",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lõi Nền Tảng Thị Trường Freelancer (DSA Final Project) - 7 Labs & 100k Stress Testing",
+  "scripts": {
+    "dev": "npm --prefix project run dev",
+    "build": "npm --prefix project run build",
+    "preview": "npm --prefix project run preview",
+    "share": "ngrok http 5173",
+    "tunnel": "ngrok http 5173",
+    "test:stress": "node --max-old-space-size=512 project/src/features/stress-test/controllers/StressTestEngine.js",
+    "test:ram:core": "node --max-old-space-size=1024 project/src/features/stress-test/controllers/CoreRamStepper.js --human=1",
+    "test:ram": "node project/src/features/stress-test/controllers/RamSweep.js",
+    "test": "node --test \"project/src/features/**/tests/*.test.js\""
+  },
+  "keywords": [
+    "data-structures",
+    "algorithms",
+    "freelance-marketplace",
+    "avl-tree",
+    "hash-table",
+    "vue3",
+    "vite"
+  ],
+  "author": "TopFreelance Engineering Team",
+  "license": "MIT"
+}

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TopFreelance Core - Enterprise Freelance Marketplace & DSA Engine</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com?plugins=container-queries"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              champagne: {
+                50: '#FDFBF7',
+                100: '#F8F4EB',
+                200: '#EFE5D3',
+                300: '#E4D3B6',
+                400: '#D4AF37',
+                500: '#C59A27',
+                600: '#A17A18',
+              },
+              platinum: {
+                50: '#F8FAFC',
+                100: '#F1F5F9',
+                200: '#E2E8F0',
+                300: '#CBD5E1',
+                400: '#94A3B8',
+                500: '#64748B',
+              },
+              ice: {
+                50: '#F0F9FF',
+                100: '#E0F2FE',
+                200: '#BAE6FD',
+                300: '#7DD3FC',
+                400: '#38BDF8',
+                500: '#0284C7',
+                600: '#0369A1',
+              },
+              cyber: {
+                800: '#171926',
+                850: '#12141f',
+                900: '#0c0d14',
+                950: '#07080d',
+              }
+            },
+            fontFamily: {
+              sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+              mono: ['"JetBrains Mono"', 'monospace'],
+            }
+          }
+        }
+      }
+    </script>
+    <!-- Google Tech Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+      /* Custom scrollbars */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: rgba(12, 13, 20, 0.6);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(16, 185, 129, 0.3);
+        border-radius: 9999px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(16, 185, 129, 0.6);
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+
+      /* Multidirectional Scroll Reveal Animations (High-Impact Optical Motion) */
+      .reveal-init {
+        opacity: 0;
+        filter: blur(10px);
+        transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+                    transform 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+                    filter 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+        will-change: opacity, transform, filter;
+      }
+      .reveal-from-left {
+        transform: translateX(-90px) scale(0.96);
+      }
+      .reveal-from-right {
+        transform: translateX(90px) scale(0.96);
+      }
+      .reveal-from-up {
+        transform: translateY(80px) scale(0.96);
+      }
+      .reveal-from-down {
+        transform: translateY(-70px) scale(0.96);
+      }
+      .reveal-scale-in {
+        transform: scale(0.85);
+      }
+      .reveal-visible {
+        opacity: 1 !important;
+        filter: blur(0px) !important;
+        transform: translate(0, 0) scale(1) !important;
+      }
+
+      /* Cascade Stagger Delays for Wave Scrolling */
+      .delay-75  { transition-delay: 75ms; }
+      .delay-150 { transition-delay: 150ms; }
+      .delay-225 { transition-delay: 225ms; }
+      .delay-300 { transition-delay: 300ms; }
+      .delay-375 { transition-delay: 375ms; }
+      .delay-450 { transition-delay: 450ms; }
+      .delay-525 { transition-delay: 525ms; }
+      .delay-600 { transition-delay: 600ms; }
+
+      /* Continuous Rotating Orange Beam Ring Animation for Active Nav Items */
+      @keyframes rotate-beam {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      .animate-beam {
+        animation: rotate-beam 3.2s linear infinite;
+      }
+    </style>
+  </head>
+  <body class="bg-gradient-to-br from-[#EBF5FB] via-[#FAF8F5] to-[#F5EFE6] text-slate-800 font-sans selection:bg-champagne-300 selection:text-black antialiased overflow-x-hidden min-h-screen">
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
