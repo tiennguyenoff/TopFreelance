@@ -36,6 +36,8 @@ class AuthStore {
           bio: 'Tập đoàn công nghệ TechCorp Global - Tuyển dụng nhân tài tự do phát triển dự án toàn cầu.'
         }
       },
+      // Trạng thái đăng nhập thật (token nằm trong cookie HttpOnly, ở đây chỉ nhớ "đã đăng nhập hay chưa")
+      loggedIn: { freelancer: false, business: false },
       isAuthModalOpen: false
     });
   }
@@ -58,6 +60,12 @@ class AuthStore {
       return true;
     }
     return false;
+  }
+
+  /** Ghi nhận kết quả đăng nhập/đăng xuất từ server (user = null → đã đăng xuất). */
+  setSession(role, user) {
+    this.state.loggedIn[role] = !!user;
+    if (user) this.state.users[role].walletBalance = Number(user.wallet_balance);
   }
 
   toggleRole() {

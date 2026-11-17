@@ -1,5 +1,5 @@
 /**
- * API MYSQL CHO TOPFREELANCE (chạy như middleware của Vite dev server)
+ * ROUTE NGHIỆP VỤ MYSQL CHO TOPFREELANCE (app.js gắn các route này vào Express Router)
  * ---------------------------------------------------------------------------
  * Nguyên tắc an toàn (TASK-47):
  *  1. Không tin dữ liệu client: danh tính lấy từ phiên (token), số tiền giải ngân lấy từ hợp đồng
@@ -10,21 +10,16 @@
  *  4. Lỗi SQL chỉ ghi log phía server; client chỉ nhận thông báo chung.
  *  5. Body tối đa 16 KB, chỉ nhận application/json, chặn request từ origin lạ.
  *
- * GIỚI HẠN CÒN LẠI (đồ án demo): 2 tài khoản mẫu đăng nhập không cần mật khẩu
- * (POST /api/session). Triển khai thật phải thay bằng đăng nhập mật khẩu (bcrypt) + cookie HttpOnly.
+ * Danh tính: middleware auth.js đọc JWT trong cookie HttpOnly và gắn req.user; ở đây chỉ kiểm tra quyền.
  */
-import mysql from 'mysql2/promise';
 import crypto from 'node:crypto';
 import { CATEGORY_BY_ID, categoryOfSkill } from '../src/features/job-catalog/models/JobCatalog.js';
 import { RateLimiter } from '../src/features/ecommerce-extras/models/TokenBucket.js';
 
-const DEMO_ACCOUNTS = { freelancer: 'USR-FL-001', business: 'USR-BIZ-002' };
 const MOCK_EMPLOYER = 'USR-SYS-000'; // chủ ảo của 10.000 tin mẫu sinh trong trình duyệt
-const MAX_BODY = 16 * 1024;
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const MAX_BUDGET = 10_000_000;
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(status, message) {
     super(message);
     this.status = status;
@@ -87,7 +82,7 @@ const money = (v) => Math.round(Number(v) * 100) / 100;
 // ---------------------------------------------------------------------------
 // HTTP HELPERS
 // ---------------------------------------------------------------------------
-function send(res, status, body) {
+export function send(res, status, body) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -95,40 +90,15 @@ function send(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+/** Thân request đã được express.json() đọc (tối đa 16 KB, chỉ application/json). */
 function readJson(req) {
-  return new Promise((resolve, reject) => {
-    const type = String(req.headers['content-type'] || '');
-    // Form HTML / text/plain từ trang khác không gửi được application/json mà không qua preflight CORS
-    if (!type.startsWith('application/json')) return reject(new HttpError(415, 'Chỉ nhận JSON.'));
-    const tooBig = () => new HttpError(413, 'Dữ liệu gửi lên quá lớn.');
-    if (Number(req.headers['content-length']) > MAX_BODY) {
-      req.resume(); // bỏ qua phần thân còn lại để vẫn trả được mã 413
-      return reject(tooBig());
-    }
-    let size = 0;
-    let overflow = false;
-    const chunks = [];
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > MAX_BODY) overflow = true; // không giữ thêm dữ liệu trong RAM
-      else chunks.push(c);
-    });
-    req.on('end', () => {
-      if (overflow) return reject(tooBig());
-      try {
-        const v = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
-        if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('not object');
-        resolve(v);
-      } catch {
-        reject(new HttpError(400, 'JSON không hợp lệ.'));
-      }
-    });
-    req.on('error', reject);
-  });
+  const v = req.body ?? {};
+  if (typeof v !== 'object' || Array.isArray(v)) throw new HttpError(400, 'JSON không hợp lệ.');
+  return v;
 }
 
 /** Chặn request ghi dữ liệu đến từ một trang web khác (CSRF). */
-function checkOrigin(req) {
+export function checkOrigin(req) {
   const origin = req.headers.origin;
   if (!origin) return; // curl / cùng origin không gửi Origin cho GET
   let host;
@@ -136,23 +106,10 @@ function checkOrigin(req) {
   if (host !== req.headers.host) throw new HttpError(403, 'Không cho phép gọi API từ trang khác.');
 }
 
-// ---------------------------------------------------------------------------
-// PHIÊN ĐĂNG NHẬP (token ngẫu nhiên 192 bit, lưu trong RAM server)
-// ---------------------------------------------------------------------------
-const sessions = new Map();
-
-function createSession(userId, role) {
-  const nowMs = Date.now();
-  for (const [t, s] of sessions) if (s.exp < nowMs) sessions.delete(t); // dọn phiên hết hạn
-  const token = crypto.randomBytes(24).toString('base64url');
-  sessions.set(token, { userId, role, exp: nowMs + SESSION_TTL_MS });
-  return token;
-}
-
+/** Yêu cầu đã đăng nhập (req.user do middleware JWT gắn). role: bắt buộc đúng vai trò. */
 function requireUser(req, role) {
-  const m = /^Bearer ([A-Za-z0-9_-]{20,64})$/.exec(String(req.headers.authorization || ''));
-  const s = m && sessions.get(m[1]);
-  if (!s || s.exp < Date.now()) throw new HttpError(401, 'Phiên đăng nhập đã hết hạn, hãy tải lại trang.');
+  const s = req.user;
+  if (!s) throw new HttpError(401, 'Phiên đăng nhập đã hết hạn, hãy đăng nhập lại.');
   if (role && s.role !== role) {
     throw new HttpError(403, role === 'business' ? 'Chỉ tài khoản Doanh nghiệp được làm thao tác này.' : 'Chỉ tài khoản Freelancer được làm thao tác này.');
   }
@@ -165,7 +122,7 @@ const applyLimiter = new RateLimiter(5, 0.5);
 // ---------------------------------------------------------------------------
 // MIGRATION NHẸ: bảng hồ sơ năng lực, cột lĩnh vực, dọn dữ liệu rút đơn cũ
 // ---------------------------------------------------------------------------
-async function ensureSchema(pool, dbName) {
+export async function ensureSchema(pool, dbName) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS freelancer_profiles (
       user_id VARCHAR(36) NOT NULL PRIMARY KEY,
@@ -225,7 +182,7 @@ function parseList(json) {
 // ---------------------------------------------------------------------------
 // CÁC ENDPOINT
 // ---------------------------------------------------------------------------
-function buildRoutes(pool, dbName) {
+export function buildRoutes(pool, dbName) {
   return {
     'GET /api/mysql/status': async () => {
       const [[u]] = await pool.query('SELECT COUNT(*) AS c FROM users');
@@ -233,19 +190,6 @@ function buildRoutes(pool, dbName) {
       const [[p]] = await pool.query('SELECT COUNT(*) AS c FROM proposals');
       const [[e]] = await pool.query('SELECT COUNT(*) AS c FROM escrow_contracts');
       return { connected: true, database: dbName, userCount: u.c, jobCount: j.c, proposalCount: p.c, escrowCount: e.c };
-    },
-
-    /** Đăng nhập tài khoản mẫu theo vai trò → token phiên + thông tin ví của CHÍNH người đó. */
-    'POST /api/session': async (req) => {
-      const body = await readJson(req);
-      const userId = DEMO_ACCOUNTS[body.role];
-      if (!userId) throw new HttpError(400, 'Vai trò không hợp lệ.');
-      const [[u]] = await pool.query(
-        'SELECT id, full_name, title, role, rating, wallet_balance, bio FROM users WHERE id = ? AND role = ?',
-        [userId, body.role]
-      );
-      if (!u) throw new HttpError(404, 'Không tìm thấy tài khoản mẫu.');
-      return { token: createSession(u.id, u.role), user: { ...u, wallet_balance: money(u.wallet_balance) } };
     },
 
     /** Danh sách công khai — KHÔNG trả email, mật khẩu băm hay số dư ví. */
@@ -266,7 +210,7 @@ function buildRoutes(pool, dbName) {
     /** Doanh nghiệp đăng việc: khóa toàn bộ ngân sách vào ký quỹ (trừ ví trong cùng transaction). */
     'POST /api/jobs': async (req) => {
       const me = requireUser(req, 'business');
-      const b = await readJson(req);
+      const b = readJson(req);
       const id = jobId(b.id);
       const title = text(b.title, 200, 'Tiêu đề', { required: true });
       const skill = skillTag(b.skillTag);
@@ -322,7 +266,7 @@ function buildRoutes(pool, dbName) {
       const me = requireUser(req, 'freelancer');
       const gate = applyLimiter.tryConsume(me.userId);
       if (!gate.allowed) throw new HttpError(429, `Bạn nộp quá nhanh, thử lại sau ${Math.ceil(gate.waitMs / 1000)} giây.`);
-      const b = await readJson(req);
+      const b = readJson(req);
       const id = jobId(b.jobId);
       const cover = text(b.coverLetter, 2000, 'Thư giới thiệu');
       const ticket = typeof b.ticketId === 'string' && /^[A-Za-z0-9-]{1,32}$/.test(b.ticketId) ? b.ticketId : null;
@@ -382,7 +326,7 @@ function buildRoutes(pool, dbName) {
     /** Freelancer rút BẤT KỲ đơn nào còn chờ duyệt: xóa hẳn đơn + hợp đồng ký quỹ của đơn. */
     'POST /api/proposals/withdraw': async (req) => {
       const me = requireUser(req, 'freelancer');
-      const b = await readJson(req);
+      const b = readJson(req);
       const id = jobId(b.jobId);
 
       return tx(pool, async (c) => {
@@ -426,7 +370,7 @@ function buildRoutes(pool, dbName) {
      */
     'POST /api/escrow/payout': async (req) => {
       const me = requireUser(req, 'business');
-      const b = await readJson(req);
+      const b = readJson(req);
       const id = jobId(b.jobId);
       const flId = text(b.freelancerId, 36, 'Mã freelancer', { required: true });
 
@@ -490,7 +434,7 @@ function buildRoutes(pool, dbName) {
     /** Freelancer lưu hồ sơ của CHÍNH mình (id lấy từ phiên, không lấy từ body). */
     'POST /api/profile': async (req) => {
       const me = requireUser(req, 'freelancer');
-      const b = await readJson(req);
+      const b = readJson(req);
       const title = text(b.title, 150, 'Chức danh', { required: true });
       const bio = text(b.bio, 2000, 'Giới thiệu');
       const location = text(b.location, 100, 'Địa điểm');
@@ -513,68 +457,6 @@ function buildRoutes(pool, dbName) {
         );
       });
       return { saved: true };
-    }
-  };
-}
-
-/**
- * Plugin Vite: gắn API vào dev server.
- * @param {Record<string,string>} env  biến môi trường (đọc từ project/.env qua loadEnv)
- */
-export function mysqlApiPlugin(env) {
-  const dbName = env.DB_NAME || 'topfreelance_db';
-  let pool = null;
-  let ready = null;
-  let routes = null;
-
-  function init() {
-    if (!ready) {
-      pool = mysql.createPool({
-        host: env.DB_HOST || '127.0.0.1',
-        port: Number(env.DB_PORT) || 3306,
-        user: env.DB_USER || 'root',
-        password: env.DB_PASSWORD || '',
-        database: dbName,
-        connectionLimit: 4, // máy 1 CPU: 4 kết nối là đủ, tránh mở kết nối mới mỗi request
-        waitForConnections: true,
-        decimalNumbers: false
-      });
-      routes = buildRoutes(pool, dbName);
-      ready = ensureSchema(pool, dbName).catch((e) => {
-        ready = null; // MySQL chưa bật → lần sau thử lại
-        throw e;
-      });
-    }
-    return ready;
-  }
-
-  return {
-    name: 'mysql-api-plugin',
-    configureServer(server) {
-      server.httpServer?.once('close', () => pool?.end().catch(() => {}));
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url.startsWith('/api/')) return next();
-        const url = new URL(req.url, 'http://localhost');
-        try {
-          if (req.method !== 'GET') checkOrigin(req);
-          await init();
-          const handler = routes[`${req.method} ${url.pathname}`];
-          if (!handler) throw new HttpError(404, 'Không có API này.');
-          const data = await handler(req, url);
-          send(res, 200, { success: true, data });
-        } catch (err) {
-          if (err instanceof HttpError) {
-            send(res, err.status, { success: false, error: err.message });
-          } else {
-            // Chi tiết lỗi SQL chỉ nằm trong log server, không lộ cấu trúc DB cho client
-            console.error(`[MySQL API] ${req.method} ${url.pathname}:`, err.code || '', err.message);
-            send(res, err.code === 'ECONNREFUSED' ? 503 : 500, {
-              success: false,
-              error: err.code === 'ECONNREFUSED' ? 'Chưa kết nối được MySQL.' : 'Lỗi máy chủ, vui lòng thử lại.'
-            });
-          }
-        }
-      });
     }
   };
 }

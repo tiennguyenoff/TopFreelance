@@ -7,6 +7,7 @@
     "dev": "npm --prefix project run dev",
     "build": "npm --prefix project run build",
     "preview": "npm --prefix project run preview",
+    "start": "npm --prefix project run start",
     "share": "ngrok http 5173",
     "tunnel": "ngrok http 5173",
     "test:stress": "node --max-old-space-size=512 project/src/features/stress-test/controllers/StressTestEngine.js",

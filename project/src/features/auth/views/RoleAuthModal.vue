@@ -65,6 +65,21 @@
             <p class="text-[11px] text-slate-500 mt-1 leading-snug">
               Quyền hạn: Đăng tin tuyển dụng, nạp tiền ký quỹ Escrow vào RAM, giải ngân hợp đồng.
             </p>
+            <div class="mt-3" @click.stop>
+              <div v-if="authStore.state.loggedIn.business" class="flex items-center justify-between gap-2 text-[11px] font-mono">
+                <span class="text-emerald-700 font-bold">● Đã đăng nhập</span>
+                <button @click="doLogout('business')" class="px-3 py-1.5 rounded-lg bg-platinum-100 hover:bg-platinum-200 text-slate-700 font-bold">Đăng xuất</button>
+              </div>
+              <form v-else @submit.prevent="doLogin('business')" class="flex items-center gap-2">
+                <input v-model="passwords.business" type="password" autocomplete="current-password" placeholder="Mật khẩu" maxlength="200"
+                  class="flex-1 min-w-0 px-3 py-2 rounded-lg border border-platinum-300 text-xs font-mono focus:outline-none focus:border-slate-500" />
+                <button type="submit" :disabled="busy === 'business' || !passwords.business"
+                  class="px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-bold">
+                  {{ busy === 'business' ? '...' : 'Đăng nhập' }}
+                </button>
+              </form>
+              <p v-if="errors.business" class="text-[11px] text-rose-600 mt-1">{{ errors.business }}</p>
+            </div>
           </div>
         </div>
 
@@ -104,6 +119,21 @@
             <p class="text-[11px] text-slate-500 mt-1 leading-snug">
               Quyền hạn: Tìm việc, nộp và rút hồ sơ ứng tuyển, xây dựng hồ sơ năng lực, nhận thanh toán.
             </p>
+            <div class="mt-3" @click.stop>
+              <div v-if="authStore.state.loggedIn.freelancer" class="flex items-center justify-between gap-2 text-[11px] font-mono">
+                <span class="text-emerald-700 font-bold">● Đã đăng nhập</span>
+                <button @click="doLogout('freelancer')" class="px-3 py-1.5 rounded-lg bg-platinum-100 hover:bg-platinum-200 text-slate-700 font-bold">Đăng xuất</button>
+              </div>
+              <form v-else @submit.prevent="doLogin('freelancer')" class="flex items-center gap-2">
+                <input v-model="passwords.freelancer" type="password" autocomplete="current-password" placeholder="Mật khẩu" maxlength="200"
+                  class="flex-1 min-w-0 px-3 py-2 rounded-lg border border-platinum-300 text-xs font-mono focus:outline-none focus:border-slate-500" />
+                <button type="submit" :disabled="busy === 'freelancer' || !passwords.freelancer"
+                  class="px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-bold">
+                  {{ busy === 'freelancer' ? '...' : 'Đăng nhập' }}
+                </button>
+              </form>
+              <p v-if="errors.freelancer" class="text-[11px] text-rose-600 mt-1">{{ errors.freelancer }}</p>
+            </div>
           </div>
         </div>
 
@@ -127,9 +157,35 @@
 </template>
 
 <script setup>
+import { reactive, ref } from 'vue';
 import { authStore } from '../controllers/AuthStore.js';
+import { login, logout } from '../../../shared/api.js';
 
-const emit = defineEmits(['roleChanged']);
+const emit = defineEmits(['roleChanged', 'sessionChanged']);
+
+const passwords = reactive({ freelancer: '', business: '' });
+const errors = reactive({ freelancer: '', business: '' });
+const busy = ref('');
+
+async function doLogin(role) {
+  busy.value = role;
+  errors[role] = '';
+  const r = await login(authStore.state.users[role].email, passwords[role]);
+  busy.value = '';
+  passwords[role] = ''; // không giữ mật khẩu trong bộ nhớ trang
+  if (!r.ok) {
+    errors[role] = r.offline ? 'Chưa kết nối được máy chủ.' : r.error;
+    return;
+  }
+  authStore.setSession(role, r.user);
+  emit('sessionChanged', role);
+}
+
+async function doLogout(role) {
+  await logout(role);
+  authStore.setSession(role, null);
+  emit('sessionChanged', role);
+}
 
 function selectRole(role) {
   authStore.switchRole(role);

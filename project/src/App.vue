@@ -164,7 +164,7 @@
     </div>
 
     <!-- Role Authentication & Switcher Modal (Freelancer & Business) -->
-    <RoleAuthModal />
+    <RoleAuthModal @sessionChanged="refreshWallets" />
 
   </div>
 </template>
@@ -180,7 +180,7 @@ import ProfileView from './features/proposals/views/ProfileView.vue';
 import LiveInspectorHUD from './features/dsa-inspector/views/LiveInspectorHUD.vue';
 import RoleAuthModal from './features/auth/views/RoleAuthModal.vue';
 import { authStore } from './features/auth/controllers/AuthStore.js';
-import { apiGet, apiPost, login } from './shared/api.js';
+import { apiGet, apiPost, fetchMe } from './shared/api.js';
 import { JobStatsController } from './features/job-catalog/controllers/JobStatsController.js';
 import { escrowQueueController } from './features/escrow-payout/controllers/EscrowQueueController.js';
 import { undoController } from './features/undo-history/controllers/UndoController.js';
@@ -511,8 +511,8 @@ async function releasePayout() {
 /** Số dư ví lấy từ phiên đăng nhập của từng tài khoản (API công khai không lộ số dư). */
 async function refreshWallets() {
   for (const role of ['freelancer', 'business']) {
-    const u = await login(role);
-    if (u) authStore.state.users[role].walletBalance = Number(u.wallet_balance);
+    const u = await fetchMe(role); // null nếu chưa đăng nhập (mật khẩu) hoặc server offline
+    authStore.setSession(role, u);
   }
 }
 

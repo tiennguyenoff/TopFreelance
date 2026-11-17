@@ -1,6 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import vue from '@vitejs/plugin-vue';
-import { mysqlApiPlugin } from './server/mysqlApi.js';
+import { mysqlApiPlugin } from './server/vitePlugin.js';
 import { ramTestApiPlugin } from './server/ramTestApi.js';
 
 // Thông tin kết nối MySQL đọc từ project/.env (không commit) — xem project/.env.example
